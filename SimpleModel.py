@@ -1,45 +1,145 @@
+# %%
+from sklearn.ensemble import GradientBoostingRegressor, HistGradientBoostingRegressor
+from sklearn.model_selection import train_test_split
 import Data as Data 
 import pandas as pd
+import numpy as np
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import mean_absolute_error, root_mean_squared_error
 
-#get historical IDA2(Intraday) prices on 15min level
-IDA2_prices=Data.getIDA2Prices()
+# %%
+data = pd.read_csv('data/dataset_task2.csv')
 
-#get histrical DA (Day Ahead) prices on 15 min level (already resampled form 60 min level)
-DA_prices=Data.getDayAheadPrices()
+data['date'] = pd.to_datetime(data['date'], format='%Y-%m-%d %H:%M:%S')
+data['hour'] = data['date'].dt.hour
+data['minute'] = data['date'].dt.minute
+data['DayOfWeek'] = data['date'].dt.dayofweek
 
-data = pd.merge(IDA2_prices, DA_prices, on='DeliveryDateTime', suffixes=('_IDA2', '_DA'))
+data['shift_1d_IDA1'] = data['IDA1price'].shift(96).dropna()
+data['shift_1w_IDA1'] = data['IDA1price'].shift(96*7).dropna()
 
-# Drop rows with NaN values
+data['shift_1d'] = data['IDA2price'].shift(96).dropna()
+data['shift_1w'] = data['IDA2price'].shift(96*7).dropna()
+
+holidays_map = {holiday: i for i, holiday in enumerate(data['holiday'].unique())}
+data['holiday'] = data['holiday'].map(holidays_map)
+
 data = data.dropna()
 
-# Add hour and minute columns
-data['Hour'] = data['DeliveryDateTime'].dt.hour
-data['Minute'] = data['DeliveryDateTime'].dt.minute
-data=data.set_index('DeliveryDateTime')
+data.index = data['date']
+data.drop(columns='date', inplace=True)
+# data = data.iloc[:-24*4*2, :] # za pred
+data
 
-# Split date on train/test set
-split_date = '2024-09-15'  # Change this to your desired date if needed
-train_df = data[data.index < split_date]
-test_df = data[data.index >= split_date]
+# %%
+X = data[['hour', 'minute', 'IDA1price', 'volumes', 'forecast_production', 'SIPXprice',
+		  'shift_1d', 'shift_1w', 'forecast_consumption', 'DayOfWeek', 'holiday', 'shift_1d_IDA1', 'shift_1w_IDA1']]
+y = data['IDA2price']
 
-X_train = train_df[['Hour', 'Minute','Price_DA']]
-y_train = train_df['Price_IDA2']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0, shuffle=False)
 
+# Final prediction
+split_date = '2024-11-11'  # Change this to your desired date if needed
+X_train = X[data.index < split_date]
+y_train = y[data.index < split_date]
+X_test = X[data.index >= split_date]
+y_test = y[data.index >= split_date]
+
+# %%
 # Train the model
-model = LinearRegression()
-model.fit(X_train, y_train)
+# model = LinearRegression()
+# model.fit(X_train, y_train)
+# Mean Absolute Error: 29.680194037123943, RMSE: 45.76756707148307
 
-# Prepare test features
-X_test = test_df[['Hour', 'Minute','Price_DA']]
+model = HistGradientBoostingRegressor(loss='squared_error',
+									  learning_rate=0.0055,
+									  max_iter=1000,
+									  max_depth=3,
+									  min_samples_leaf=1,
+									  l2_regularization=0.1)
+model.fit(X_train, y_train)
+# Mean Absolute Error: 25.4754017266614, RMSE: 48.34064373316218
+
+# model = GradientBoostingRegressor(random_state=0,
+# 								learning_rate=0.1,
+# 								n_estimators=200,
+# 								max_depth=5, 
+# 								min_samples_split=10)
+# model.fit(X_train, y_train)
+# Mean Absolute Error: 26.49973051900755, RMSE: 49.67686869135909
 
 # Make predictions
-test_df['Predicted_Price_IDA2'] = model.predict(X_test)
-
+pred = pd.Series(model.predict(X_test), index=y_test.index)
+merge = pd.concat([y_test, pred], axis=1, ignore_index=True)
+merge.rename(columns={0: 'IDA2price', 1: 'predicted_price_IDA2'}, inplace=True)
 
 #Analyse results
-mae = mean_absolute_error(test_df['Price_IDA2'], test_df['Predicted_Price_IDA2'])
+rmse = root_mean_squared_error(merge['IDA2price'], merge['predicted_price_IDA2'])
+mae = mean_absolute_error(merge['IDA2price'], merge['predicted_price_IDA2'])
 
-print(f'Mean Absolute Error: {mae}')
-test_df[['Predicted_Price_IDA2','Price_IDA2']].plot()
+print(f'Mean Absolute Error: {mae}, RMSE: {rmse}', end='\n\n')
+merge.plot(figsize=(18, 8))
+
+# %%
+from sklearn.experimental import enable_halving_search_cv # noqa
+from sklearn.model_selection import HalvingGridSearchCV
+
+# Define the hyperparameters to tune
+# param_grid = {
+#     'learning_rate': [0.01, 0.1, 0.5],
+#     'max_depth': [3, 5, 10],
+#     'min_samples_leaf': [1, 5, 10]
+# }
+
+param_grid = {
+	'learning_rate': (np.logspace(0.001, 1, 20)/1000).tolist(),
+	'max_iter': [1000],
+	'max_depth': [3],
+	'min_samples_leaf': [1],
+	'l2_regularization': [0.1, 0.05, 0.01, 0.005, 0.001]
+}
+
+# Best parameters: {'learning_rate': 0.05, 'max_depth': 3, 'min_samples_leaf': 1}
+# Best model: HistGradientBoostingRegressor(learning_rate=0.05, max_depth=3, min_samples_leaf=1)
+# RMSE: 37.825313081853125
+# np.arange(11, 17, 0.5).tolist()
+# param_grid = {
+# 	'learning_rate': 0.0055,
+# 	'max_iter': [1000],
+# 	'max_depth': [3],
+# 	'min_samples_leaf': [1],
+# 	'l2_regularization': [0.1]
+# }
+
+# Define the GBR model
+gbr = HistGradientBoostingRegressor(random_state=0)
+
+# Perform grid search
+grid_search = HalvingGridSearchCV(gbr,
+								  param_grid,
+								  cv=5,
+								  scoring='neg_root_mean_squared_error',
+								  n_jobs=-1,
+								  verbose=1)
+grid_search.fit(X_train, y_train)
+
+# Get the best parameters
+best_params = grid_search.best_params_
+print("Best parameters:", best_params)
+
+# Get the best model
+best_model = grid_search.best_estimator_
+print("Best model:", best_model)
+
+# Evaluate the best model
+forecast = best_model.predict(X_test)
+mse = root_mean_squared_error(y_test, forecast)
+print("RMSE:", mse)
+
+
+# %%
+output = merge['predicted_price_IDA2'].copy()
+output.index = output.index.strftime('%Y-%m-%dT%H:%M:%S')
+# output.to_csv('data/forecasts/forecast_11-11.csv', header=False)
+output
+# %%
