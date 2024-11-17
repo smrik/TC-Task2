@@ -266,7 +266,99 @@ def getIDA2Prices():
     data=data.dropna()
     return data
 
+def getIDA2_Old():
+	"""
+	Intraday IDA2 Auction: Auction at 22:00 for every 15min interval in the next day
 
+	Returns
+	-------
+	data : Pandas DataFrame with column datetime(CET) and electricity price[€/MWh]
+
+	"""
+	urls = ["https://www.bsp-southpool.com/market-data/intraday-auction.html?file=files/documents/trading/MI2_MarketResultsAuction.xlsx&cid=3190",
+			"https://www.bsp-southpool.com/market-data/intraday-auction.html?file=files/documents/trading/MI2_MarketResultsAuction_2023.xlsx&cid=3190",
+			"https://www.bsp-southpool.com/market-data/intraday-auction.html?file=files/documents/trading/MI2_MarketResultsAuction_2022.xlsx&cid=3190"]
+
+	data_merge = pd.DataFrame()
+
+	for url in urls:
+		# Download the Excel file
+		response = requests.get(url)
+		response.raise_for_status()
+
+		# Load the Excel file into a pandas DataFrame
+		excel_file = BytesIO(response.content)
+		sheets = pd.read_excel(excel_file, sheet_name=None, skiprows=1)  # Load all sheets
+		limited_sheets = [sheet.head(32) for sheet in sheets.values()]
+
+		# Concatenate the sheets into a single DataFrame
+		data = pd.concat(limited_sheets, ignore_index=True)
+		data.rename(columns={'Delivery Date': 'date'}, inplace=True)
+
+		data.index = data['date']
+
+		data = data.iloc[:-1, 2:26]
+		data.columns = [i for i in range(0, 24)]
+		data = pd.melt(data, value_vars=[i for i in range(0, 24)],
+					var_name='Hour_q', value_name='Price', ignore_index=False)
+
+		data = data.dropna()
+
+		data.index = pd.to_datetime(data.index) + pd.to_timedelta(data['Hour_q'], unit='Hour')
+		data.sort_index()
+
+		data.index = data.index.tz_localize('Europe/Ljubljana', ambiguous='NaT', nonexistent='NaT')
+
+		data_merge = pd.concat([data_merge, data])
+
+	return data_merge
+
+def getIDA1_Old():
+	"""
+	Intraday IDA2 Auction: Auction at 22:00 for every 15min interval in the next day
+
+	Returns
+	-------
+	data : Pandas DataFrame with column datetime(CET) and electricity price[€/MWh]
+
+	"""
+	urls = ["https://www.bsp-southpool.com/market-data/intraday-auction.html?file=files/documents/trading/MI1_MarketResultsAuction.xlsx&cid=1289",
+			"https://www.bsp-southpool.com/market-data/intraday-auction.html?file=files/documents/trading/MI1_MarketResultsAuction_2023.xlsx&cid=1289",
+			"https://www.bsp-southpool.com/market-data/intraday-auction.html?file=files/documents/trading/MI1_MarketResultsAuction_2022.xlsx&cid=1289"]
+
+	data_merge = pd.DataFrame()
+
+	for url in urls:
+		# Download the Excel file
+		response = requests.get(url)
+		response.raise_for_status()
+
+		# Load the Excel file into a pandas DataFrame
+		excel_file = BytesIO(response.content)
+		sheets = pd.read_excel(excel_file, sheet_name=None, skiprows=1)  # Load all sheets
+		limited_sheets = [sheet.head(32) for sheet in sheets.values()]
+
+		# Concatenate the sheets into a single DataFrame
+		data = pd.concat(limited_sheets, ignore_index=True)
+		data.rename(columns={'Delivery Date': 'date'}, inplace=True)
+
+		data.index = data['date']
+
+		data = data.iloc[:-1, 2:26]
+		data.columns = [i for i in range(0, 24)]
+		data = pd.melt(data, value_vars=[i for i in range(0, 24)],
+					var_name='Hour_q', value_name='Price', ignore_index=False)
+
+		data = data.dropna()
+
+		data.index = pd.to_datetime(data.index) + pd.to_timedelta(data['Hour_q'], unit='Hour')
+		data.sort_index()
+
+		data.index = data.index.tz_localize('Europe/Ljubljana', ambiguous='NaT', nonexistent='NaT')
+
+		data_merge = pd.concat([data_merge, data])
+
+	return data_merge
 
 # %%
 # dayaheadvol = getDayAheadVolumes()
