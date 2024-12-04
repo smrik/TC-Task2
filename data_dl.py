@@ -7,23 +7,19 @@ from selenium.webdriver.common.by import By
 from datetime import datetime, timedelta
 import time
 from selenium.webdriver.common.keys import Keys
+import openmeteo_requests
+import requests_cache
+from retry_requests import retry
 
 # southpool data
-# Day Ahead Auction
-# day ahead trading results 
+# Day Ahead Auction - day ahead trading results 
 dap = Data.getDayAheadPrices()
 dap.to_csv('data/da/day_ahead_prices.csv', index=True)
 dav = Data.getDayAheadVolumes()
 dav.to_csv('data/da/day_ahead_volumes.csv', index=True)
 
-# Day Ahead Auction
-# market coupling results
-# --- missing ---
-
-# Intraday Auction
-
 #
-# IDA 1
+# IDA 1 - for the last three years
 #
 # ida1_old = Data.getIDA1_Old()
 # ida1_old['DeliveryDateTime'] = ida1_old.index
@@ -34,7 +30,7 @@ ida1 = pd.concat([ida1_old, ida1])
 ida1.to_csv('data/ida/ida1_prices.csv', index=True)
 
 # 
-# IDA 2
+# IDA 2 - for the last three years
 #
 # 15 min time series - to forecast
 # ida2_old = Data.getIDA2_Old()
@@ -49,7 +45,9 @@ ida2.to_csv('data/ida/ida2_prices.csv', index=True)
 sipx = Data.getDayAheadPrices_15min()
 sipx.to_csv('data/other/sipx_prices.csv', index=True)
 
-# %%
+# 
+# For downloading the ELES data, because their own csv had wrong demand forecast in the data
+#
 def eles_update(current_date, end_date, df_current):
 	driver = webdriver.Chrome()
 	driver.get("https://www.eles.si/prevzem-in-proizvodnja")
@@ -86,3 +84,52 @@ if current_date < end_date:
 	eles_update(current_date, end_date, df_current)
 else:
 	print("Data is up to date")
+
+
+#
+# For Dowloading the weather forecasts for the next days
+#
+
+# Setup the Open-Meteo API client with cache and retry on error
+cache_session = requests_cache.CachedSession('.cache', expire_after = 3600)
+retry_session = retry(cache_session, retries = 5, backoff_factor = 0.2)
+openmeteo = openmeteo_requests.Client(session = retry_session)
+
+# Make sure all required weather variables are listed here
+# The order of variables in hourly or daily is important to assign them correctly below
+url = "https://previous-runs-api.open-meteo.com/v1/forecast"
+params = {
+	"latitude": 46.2237,
+	"longitude": 14.4576,
+	"hourly": ["temperature_2m", "temperature_2m_previous_day1", "temperature_2m_previous_day2", "temperature_2m_previous_day3", "temperature_2m_previous_day4", "temperature_2m_previous_day5", "temperature_2m_previous_day6", "temperature_2m_previous_day7", "cloud_cover", "cloud_cover_previous_day1", "cloud_cover_previous_day2", "cloud_cover_previous_day3", "cloud_cover_previous_day4", "cloud_cover_previous_day5", "cloud_cover_previous_day6", "cloud_cover_previous_day7", "direct_normal_irradiance", "direct_normal_irradiance_previous_day1", "direct_normal_irradiance_previous_day2", "direct_normal_irradiance_previous_day3", "direct_normal_irradiance_previous_day4", "direct_normal_irradiance_previous_day5", "direct_normal_irradiance_previous_day6", "direct_normal_irradiance_previous_day7"],
+	"timezone": "Europe/Berlin",
+	"past_days": 14
+}
+responses = openmeteo.weather_api(url, params=params)
+
+# Process first location. Add a for-loop for multiple locations or weather models
+response = responses[0]
+print(f"Coordinates {response.Latitude()}°N {response.Longitude()}°E")
+print(f"Elevation {response.Elevation()} m asl")
+print(f"Timezone {response.Timezone()} {response.TimezoneAbbreviation()}")
+print(f"Timezone difference to GMT+0 {response.UtcOffsetSeconds()} s")
+
+# Process hourly data. The order of variables needs to be the same as requested.
+hourly = response.Hourly()
+hourly_temperature_2m = hourly.Variables(0).ValuesAsNumpy()
+hourly_cloud_cover = hourly.Variables(8).ValuesAsNumpy()
+hourly_direct_normal_irradiance = hourly.Variables(16).ValuesAsNumpy()
+
+hourly_data = {"date": pd.date_range(
+	start = pd.to_datetime(hourly.Time(), unit = "s", utc = True),
+	end = pd.to_datetime(hourly.TimeEnd(), unit = "s", utc = True),
+	freq = pd.Timedelta(seconds = hourly.Interval()),
+	inclusive = "left"
+)}
+hourly_data["temperature_2m"] = hourly_temperature_2m
+hourly_data["cloud_cover"] = hourly_cloud_cover
+hourly_data["direct_normal_irradiance"] = hourly_direct_normal_irradiance
+
+hourly_dataframe = pd.DataFrame(data = hourly_data)
+hourly_dataframe.to_csv("data/weather/weather_fore_11-27.csv", index=False)
+print(hourly_dataframe)

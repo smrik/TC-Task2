@@ -359,12 +359,3 @@ def getIDA1_Old():
 		data_merge = pd.concat([data_merge, data])
 
 	return data_merge
-
-# %%
-# dayaheadvol = getDayAheadVolumes()
-# dayaheadvol.to_csv('../Task 1/datasets/main/volumes.csv', index=True)
-
-# %%
-# ida2 = getIDA2Prices()
-# ida2.to_csv('data/Ida2.csv', index=False)
-# %%
